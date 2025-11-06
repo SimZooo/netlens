@@ -16,6 +16,7 @@
     let highlighted_host = $state();
     let pcap_toggle = $state(false);
     let pcap = $state([]);
+    let ws = $state();
     $effect(() => (gateway_avail = gateway_availability()));
 
     // Chartjs
@@ -103,7 +104,7 @@
             node.data.reduce((sum, host) => sum + host[2], 0) /
             node.data.length;
 
-        chart_object.data.labels.push(node_history.length);
+        chart_object.data.labels = [...chart_object.data.labels, node_history.length];
 
         chart_object.data.datasets[0].data = [
             ...chart_object.data.datasets[0].data,
@@ -113,7 +114,6 @@
             ...chart_object.data.datasets[1].data,
             latency,
         ];
-        update_chart_canvas_width(node_history.length);
         chart_object.update();
     });
 
@@ -164,16 +164,11 @@
     }
 
     onMount(async () => {
-        const ws = new WebSocket(
-            "ws://127.0.0.1:8080/api/packets/ws/capture/0",
-        );
+        ws = new WebSocket("ws://127.0.0.1:8080/api/packets/ws/capture/0");
 
-        ws.onmessage = (event) => {
-            if (pcap_toggle) {
-                const packet = JSON.parse(event.data);
-                pcap.push(packet);
-            }
-        };
+        ws.addEventListener("close", () => console.log("WebSocket closed"));
+        ws.addEventListener("error", (err) => console.error("WebSocket error:", err));
+
 
         setInterval(async function () {
             let interfaces = await get_interfaces();
@@ -209,6 +204,29 @@
         resize_observer.observe(outer_div);
     });
 
+    function update_ws() {
+        if (pcap_toggle) {
+            if (ws.readyState === WebSocket.CLOSED) {
+                console.log("WebSocket closed. Attempting restart")
+                ws = new WebSocket("ws://127.0.0.1:8080/api/packets/ws/capture/0");
+                console.log(ws.readyState)
+            }
+            ws.onmessage = (event) => {
+                const packet = JSON.parse(event.data);
+                pcap = [...pcap, packet];
+            };
+        } else {
+            ws.onmessage = null;
+        }
+    }
+
+    $effect(() => {
+        let react = pcap_toggle;
+        if (!ws) { return }
+        console.log(ws.readyState)
+        update_ws();
+    })
+
     const gateway_availability = () => {
         let availability = 0;
         for (let i = 0; i < node_history.length; i++) {
@@ -231,9 +249,19 @@
         return "#e74c3c";
     };
 
-    function update_chart_canvas_width(data_length) {
-        if (chart_canvas) {
+    function get_last_ip() {
+        let node = node_history[node_history.length - 1].data.find((ip) => ip[0].endsWith(".1"));
+        if (!node) {
+            return "Not Available"
         }
+
+        let ip = node[0];
+
+        if (!ip) {
+            return "Not Available"
+        }
+
+        return ip;
     }
 </script>
 
@@ -329,9 +357,7 @@
                 </p>
                 {#if node_history.length > 0}
                     <p class="text-xl">
-                        {node_history[node_history.length - 1].data.find((ip) =>
-                            ip[0].endsWith(".1"),
-                        )[0]}
+                        {get_last_ip()}
                     </p>
                 {/if}
             </div>
@@ -391,7 +417,8 @@
                         <p>Port Dst</p>
                     </span>
                     {#each pcap as packet}
-                        <PcapEl packet={packet} />
+                        <PcapEl packet={packet}>
+                        </PcapEl>
                     {/each}
                 </div>
             </div>

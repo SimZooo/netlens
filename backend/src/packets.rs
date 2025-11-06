@@ -1,12 +1,11 @@
-use std::{net::{IpAddr, Ipv4Addr}, time::Duration, vec};
+use std::net::IpAddr;
 
-use actix_web::{HttpRequest, HttpResponse, Responder, web};
+use actix_web::{HttpRequest, Responder, web};
 use pnet::{datalink::{self, NetworkInterface}, ipnetwork::Ipv4Network, packet::{ethernet::{EtherTypes, EthernetPacket}, ipv4::Ipv4Packet, ipv6::Ipv6Packet, tcp::TcpPacket}, util::MacAddr};
 use pnet::datalink::Channel::Ethernet;
 use pnet::packet::Packet;
-use pnet::packet::FromPacket;
 use serde::Serialize;
-use tokio::{sync::broadcast, time::sleep};
+use tokio::sync::broadcast;
 
 use crate::arp_scan;
 
@@ -52,10 +51,8 @@ pub fn get_interface(index: u32) -> Option<NetworkInterface> {
 pub async fn start_capture(tx: broadcast::Sender<Vec<u8>>) {
     let interfaces = datalink::interfaces();
     let interface = interfaces.get(0);
-    println!("Started packet capture: {:?}!", interface);
 
     if let Some(interface) = interface {
-        println!("Interface received! {:?}", interface.name);
         let (_, mut     rx) = match datalink::channel(&interface, Default::default()) {
             Ok(Ethernet(tx, rx)) => (tx, rx),
             Ok(_) => panic!("Unhandled interface"),
@@ -75,7 +72,6 @@ pub async fn start_capture(tx: broadcast::Sender<Vec<u8>>) {
 }
 
 pub async fn capture_interface_packets(req: HttpRequest, body: web::Payload, index: web::Path<u32>, tx: web::Data<broadcast::Sender<Vec<u8>>>) -> impl Responder {
-    println!("Received WS connection!");
     //let interface = get_interface(index.into_inner());
     let (res, mut session, _) = actix_ws::handle(&req, body).unwrap();
     let mut rx = tx.subscribe();
