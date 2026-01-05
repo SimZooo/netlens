@@ -34,34 +34,30 @@ Use channel (tx, rx)
 Capture loop -> tx -> rx -> parser -> reassembler
 
 [Done]
-Ethernet Frame X
-IP Packet X
-TCP Packet X
-Get fragmented packets and reassemble X
-
-[03.01.2025]
-Currently handling Ethernet Frame -> IP (v4 only) -> Tcp/Udp
+Ethernet Frame
+IP Packet
+TCP Packet
+Seperate layers into "handlers/files"
+Reassemble packet fragments
 
 [Todo next]
 FOCUS ON BACKEND
-    ** Either make a custom parsing library for layer 5-7 or use something like etherparse **
-    ** Reassemble packet fragments ** (do i need to reassemble? maybe for protocol dissection) **
-        Must handle retransmission
+    Packet defragmentation:
+        Must handle retransmission (check that all byte offsets match)
+        Detect fragment overlapping and check for fragment completeness
 
-        HashMap of fragmented packets, keyed by the identification
-        The value should be the raw payload of the IP Packet? Vec of each packet's data?
-        The original data size should be the offset of the last packet multiplied by 8 + the size of the last packet
-
-    -------------------------
-    ** Seperate layers into "handlers/files" **
-        Would require more custom structs for the intermediate packets (i.e. replacing EthernetPacket, Ipv4Packet, TcpPacket, etc.)
-    -------------------------
+        ** Fragment Manager ? **
+        Index by 4-tuple object
 
     ** Handle TCP segments **
     Think about how to structure a "flow", or packets that belong together
     4-tuple struct for easy comparison?
 
+    ** Pipeline object to define a custom pipeline of layer parsers? **
+    ** Either make a custom parsing library for layer 5-7 or use something like etherparse **
+
     Handle IPv6
+
     Give ability to follow a TCP Stream
         Use both IP-address as well as TCP Port
         Handle IP and TCP port for both Client and Server

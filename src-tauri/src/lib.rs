@@ -1,35 +1,62 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use std::thread;
 use std::time::SystemTime;
 
 use pnet::datalink::{self, Channel::Ethernet};
-use pnet::packet::icmp::{IcmpPacket, IcmpType, IcmpTypes};
-use pnet::packet::{
-    ethernet::{EtherTypes, EthernetPacket},
-    ip::{IpNextHeaderProtocol, IpNextHeaderProtocols},
-    ipv4::Ipv4Packet,
-    ipv6::Ipv6Packet,
-    tcp::TcpPacket,
-    udp::UdpPacket,
-    Packet,
-};
+use pnet::packet::ethernet::{EtherType, EtherTypes};
 
+use pnet::packet::ip::IpNextHeaderProtocol;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tauri::{Manager, State};
 
-use crate::datalink_parser::DatalinkParser;
-use crate::parser::LayerParser;
+use parsers::datalink_parser::DatalinkParser;
+use parsers::network_parser::Ipv4NetworkParser;
+use parsers::parser::{LayerParser, PacketContext};
+use parsers::transport_parser::TransportParser;
+
+use crate::reassembler::Reassembler;
 
 pub struct AppState {
     interface: Option<String>,
     listen: bool,
 }
 
-pub mod datalink_parser;
-pub mod parser;
+mod parsers;
+mod reassembler;
+
+pub type FragmentedPackets = BTreeMap<u16, IpFragmentedPacket>;
+
+#[derive(Default, Debug)]
+pub struct IpFragmentedPacket {
+    done: bool,
+    ethertype: Option<EtherType>,
+    next_protocol: Option<IpNextHeaderProtocol>,
+    fragments: BTreeMap<usize, Vec<u8>>,
+}
+
+impl IpFragmentedPacket {
+    /// Create new fragmented packet with the first fragment
+    fn new_first(
+        done: bool,
+        next_protocol: IpNextHeaderProtocol,
+        ethertype: EtherType,
+        fragment: Vec<u8>,
+        byte_offset: usize,
+    ) -> Self {
+        let mut fragments = BTreeMap::new();
+        fragments.insert(byte_offset, fragment);
+
+        Self {
+            done,
+            ethertype: Some(ethertype),
+            next_protocol: Some(next_protocol),
+            fragments,
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Clone, Serialize)]
 pub enum OsiLayer {
@@ -67,11 +94,6 @@ pub struct NetworkPacket {
     pub timestamp: SystemTime,
     pub raw: Vec<u8>,
     pub layers: Vec<Layer>,
-}
-
-enum IpPacket<'a> {
-    V4(Ipv4Packet<'a>),
-    V6(Ipv6Packet<'a>),
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -115,7 +137,7 @@ fn set_listen(val: bool, state: State<'_, Arc<Mutex<AppState>>>) {
 fn start_listening(state: State<'_, Arc<Mutex<AppState>>>, app: AppHandle) {
     let state_clone = state.inner().clone();
     thread::spawn(move || {
-        let mut fragmented_packets: HashMap<u16, Vec<Vec<u8>>> = HashMap::new();
+        let mut fragmented_packets: FragmentedPackets = BTreeMap::new();
 
         let interface_name = {
             let state = state_clone.lock().unwrap();
@@ -152,90 +174,46 @@ fn start_listening(state: State<'_, Arc<Mutex<AppState>>>, app: AppHandle) {
                 }
                 Err(e) => eprintln!("{e}"),
             }
+
+            let reassembled_packets = Reassembler::update(&mut fragmented_packets);
+            for mut packet in reassembled_packets {
+                let Some(transport_layer) = TransportParser::parse(&vec![], &mut packet, None)
+                else {
+                    println!("Invalid transport layer in fragmented packet");
+                    continue;
+                };
+
+                let _ = app.emit(
+                    "packet_received",
+                    NetworkPacket {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        layers: vec![transport_layer],
+                        raw: packet.network_payload,
+                        timestamp: SystemTime::now(),
+                    },
+                );
+            }
         }
     });
 }
 
 pub fn handle_packet(
     packet: &[u8],
-    fragmented_packets: &mut HashMap<u16, Vec<Vec<u8>>>,
+    fragmented_packets: &mut FragmentedPackets,
 ) -> Option<NetworkPacket> {
-    let (datalink_layer, ethernet_metadata) = DatalinkParser::parse(packet).unwrap();
-    let ether_type = ethernet_metadata.ethertype;
-    let (network_layer, network_packet) = match ether_type {
+    let mut packet_context = PacketContext::default();
+    let datalink_layer =
+        DatalinkParser::parse(&packet.to_vec(), &mut packet_context, None).unwrap();
+    let ether_type = packet_context.ethertype.unwrap();
+
+    let network_layer = match ether_type {
         EtherTypes::Ipv4 => {
-            let Some(ip_packet) = Ipv4Packet::new(ethernet_packet.payload()) else {
-                return None;
-            };
-            let fragmented =
-                (ip_packet.get_flags() & 0b001) != 0 || ip_packet.get_fragment_offset() != 0;
-
-            let mut fields = vec![
-                Field::new("Source IP".to_string(), ip_packet.get_source().to_string()),
-                Field::new(
-                    "Destination IP".to_string(),
-                    ip_packet.get_destination().to_string(),
-                ),
-                Field::new("TTL".to_string(), ip_packet.get_ttl().to_string()),
-                Field::new("Flags".to_string(), ip_packet.get_flags().to_string()),
-            ];
-            if fragmented {
-                fields.push(Field::new(
-                    "Fragmented".to_string(),
-                    format!("Offset: {}", ip_packet.get_fragment_offset().to_string()),
-                ));
-
-                if let Some(frags) = fragmented_packets.get_mut(&ip_packet.get_identification()) {
-                    println!("Existing fragmented packet");
-                    frags.push(ip_packet.payload().to_vec());
-                    if ip_packet.get_flags() & 0b100 == 0 {
-                        let payload: Vec<u8> = frags.iter().flatten().cloned().collect();
-                        println!(
-                            "Final packet of fragmented packet received: {:?} with protocol: {}",
-                            payload,
-                            ip_packet.get_next_level_protocol().to_string()
-                        );
-                    }
-                } else {
-                    fragmented_packets.insert(
-                        ip_packet.get_identification(),
-                        vec![ip_packet.payload().to_vec()],
-                    );
-                }
-            }
-            (
-                Layer {
-                    name: "Ipv4 Packet".to_string(),
-                    osi_layer: OsiLayer::Network,
-                    fields,
-                },
-                IpPacket::V4(ip_packet),
-            )
+            Ipv4NetworkParser::parse(&vec![], &mut packet_context, Some(fragmented_packets))?
         }
-        /*
-        EtherTypes::Ipv6 => {
-            let Some(ip_packet) = Ipv6Packet::new(ethernet_packet.payload()) else {
-                return None;
-            };
-            (
-                Layer {
-                    name: "Ipv6 Packet".to_string(),
-                    osi_layer: OsiLayer::Network,
-                    fields: vec![],
-                },
-                IpPacket::V6(ip_packet),
-            )
-        }
-         */
         _ => return None,
     };
 
-    let Some(transport_layer) = (match network_packet {
-        IpPacket::V4(packet) => handle_v4(packet),
-        IpPacket::V6(packet) => handle_v6(packet),
-    }) else {
-        return None;
-    };
+    let transport_layer = TransportParser::parse(&vec![], &mut packet_context, None)?;
 
     Some(NetworkPacket {
         id: uuid::Uuid::new_v4().to_string(),
@@ -243,105 +221,4 @@ pub fn handle_packet(
         raw: packet.to_vec(),
         timestamp: SystemTime::now(),
     })
-}
-
-fn handle_v4(network_packet: Ipv4Packet) -> Option<Layer> {
-    let protocol = network_packet.get_next_level_protocol();
-    match protocol {
-        IpNextHeaderProtocols::Tcp => {
-            let Some(tcp_packet) = TcpPacket::new(network_packet.payload()) else {
-                return None;
-            };
-
-            Some(Layer {
-                name: "TCP Packet".to_string(),
-                osi_layer: OsiLayer::Transport,
-                fields: vec![
-                    Field::new("Source".to_string(), tcp_packet.get_source().to_string()),
-                    Field::new(
-                        "Destination".to_string(),
-                        tcp_packet.get_destination().to_string(),
-                    ),
-                    Field::new("Flags".to_string(), tcp_packet.get_flags().to_string()),
-                    Field::new(
-                        "Checksum".to_string(),
-                        tcp_packet.get_checksum().to_string(),
-                    ),
-                    Field::new(
-                        "Sequence number".to_string(),
-                        tcp_packet.get_sequence().to_string(),
-                    ),
-                ],
-            })
-        }
-        IpNextHeaderProtocols::Udp => {
-            let Some(udp_packet) = UdpPacket::new(network_packet.payload()) else {
-                return None;
-            };
-
-            Some(Layer {
-                name: "UDP Packet".to_string(),
-                osi_layer: OsiLayer::Transport,
-                fields: vec![
-                    Field::new("Source".to_string(), udp_packet.get_source().to_string()),
-                    Field::new(
-                        "Destination".to_string(),
-                        udp_packet.get_destination().to_string(),
-                    ),
-                    Field::new(
-                        "Checksum".to_string(),
-                        udp_packet.get_checksum().to_string(),
-                    ),
-                    Field::new("Length".to_string(), udp_packet.get_length().to_string()),
-                ],
-            })
-        }
-        _ => Some(Layer {
-            name: protocol.to_string(),
-            osi_layer: OsiLayer::Transport,
-            fields: vec![],
-        }),
-    }
-}
-
-fn handle_v6(network_packet: Ipv6Packet) -> Option<Layer> {
-    let header = network_packet.get_next_header();
-    let payload = network_packet.payload();
-    let fields = vec![];
-    if let Some(transport_protocol) = next_transport_header(payload) {
-        return Some(Layer {
-            name: transport_protocol.1.to_string(),
-            osi_layer: OsiLayer::Transport,
-            fields,
-        });
-    }
-
-    return None;
-}
-
-fn next_transport_header<'a>(packet: &'a [u8]) -> Option<(&'a [u8], IpNextHeaderProtocol)> {
-    if packet.len() < 40 {
-        return None;
-    } // invalid IPv6
-    let ipv6_packet = Ipv6Packet::new(packet)?;
-    let mut next_header = ipv6_packet.get_next_header();
-    let mut offset = 40;
-
-    loop {
-        if offset + 2 > packet.len() {
-            break;
-        }
-        let ext_header = &packet[offset..];
-        next_header = IpNextHeaderProtocol(ext_header[0]);
-        let ext_len = ext_header[1] as usize;
-        offset += (ext_len + 1) * 8;
-        if offset > packet.len() {
-            return None;
-        }
-        if next_header == IpNextHeaderProtocols::Tcp || next_header == IpNextHeaderProtocols::Udp {
-            break;
-        };
-    }
-
-    Some((&packet[offset..], next_header))
 }
