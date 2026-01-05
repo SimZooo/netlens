@@ -58,7 +58,18 @@ impl LayerParser for Ipv4NetworkParser {
                     ip_packet.payload().to_vec(),
                 );
                 if ip_packet.get_flags() & 0b001 == 0 {
-                    frag.done = true;
+                    // Check if all fragments exist
+                    let mut expected = 0;
+                    let mut done = true;
+                    for f in frag.fragments.iter() {
+                        println!("{} {}", f.0, expected);
+                        if *f.0 != expected {
+                            done = false;
+                            break;
+                        }
+                        expected += 1;
+                    }
+                    frag.done = done;
                 }
             } else {
                 fragmented_packets.insert(

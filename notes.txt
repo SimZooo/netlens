@@ -39,21 +39,12 @@ IP Packet
 TCP Packet
 Seperate layers into "handlers/files"
 Reassemble packet fragments
+    Index by 4-tuple object
 
 [Todo next]
 FOCUS ON BACKEND
-    Packet defragmentation:
-        Must handle retransmission (check that all byte offsets match)
-        Detect fragment overlapping and check for fragment completeness
-
-        ** Fragment Manager ? **
-        Index by 4-tuple object
-
     ** Handle TCP segments **
-    Think about how to structure a "flow", or packets that belong together
-    4-tuple struct for easy comparison?
 
-    ** Pipeline object to define a custom pipeline of layer parsers? **
     ** Either make a custom parsing library for layer 5-7 or use something like etherparse **
 
     Handle IPv6
@@ -63,17 +54,16 @@ FOCUS ON BACKEND
         Handle IP and TCP port for both Client and Server
     Same for UDP
 
-    Better memory usage (in structs like PacketMetadata)
-
 Warn if checksums are wrong
-
 Make UI look better
 
-[Defragmentation]
-IP Packet has an identification field which is the index of the datagram in the list of fragmented packets
-It also has a Do Not Fragment flag (second bit) and a More Fragments flag (third bit)
-Fragment Offset field: shows the position of the fragment in the original datagram
-    Measured in units of 8 bytes, so offset = BYTE_OFFSET/8
+[Thoughts]
+** Fragment Manager ? **
+Detect fragment overlapping and check for fragment completeness
+Think about how to structure a "flow", or packets that belong together
+4-tuple struct for easy comparison?
+** Pipeline object to define a custom pipeline of layer parsers? **
+
 
 [Protocol Dissector]
 Make each dissector a Lua script that can be loaded as a plugin

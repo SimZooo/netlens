@@ -1,8 +1,6 @@
-use std::collections::BTreeMap;
-
 use pnet::packet::{ethernet::EtherType, ip::IpNextHeaderProtocol};
 
-use crate::{FragmentedPackets, IpFragmentedPacket, Layer};
+use crate::{FragmentedPackets, Layer};
 
 #[derive(Clone, Default)]
 pub struct PacketContext {
