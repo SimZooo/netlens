@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 
 use std::thread;
@@ -17,7 +18,7 @@ use parsers::network_parser::Ipv4NetworkParser;
 use parsers::parser::{LayerParser, PacketContext};
 use parsers::transport_parser::TransportParser;
 
-use crate::reassembler::Reassembler;
+use crate::reassembler::{FragmentedKey, Reassembler};
 
 pub struct AppState {
     interface: Option<String>,
@@ -27,11 +28,13 @@ pub struct AppState {
 mod parsers;
 mod reassembler;
 
-pub type FragmentedPackets = BTreeMap<u16, IpFragmentedPacket>;
+pub type FragmentedPackets = BTreeMap<FragmentedKey, IpFragmentedPacket>;
 
 #[derive(Default, Debug)]
 pub struct IpFragmentedPacket {
     done: bool,
+    src_ip: Option<IpAddr>,
+    dst_ip: Option<IpAddr>,
     ethertype: Option<EtherType>,
     next_protocol: Option<IpNextHeaderProtocol>,
     fragments: BTreeMap<usize, Vec<u8>>,
@@ -40,6 +43,8 @@ pub struct IpFragmentedPacket {
 impl IpFragmentedPacket {
     /// Create new fragmented packet with the first fragment
     fn new_first(
+        src_ip: IpAddr,
+        dst_ip: IpAddr,
         done: bool,
         next_protocol: IpNextHeaderProtocol,
         ethertype: EtherType,
@@ -50,6 +55,8 @@ impl IpFragmentedPacket {
         fragments.insert(byte_offset, fragment);
 
         Self {
+            src_ip: Some(src_ip),
+            dst_ip: Some(dst_ip),
             done,
             ethertype: Some(ethertype),
             next_protocol: Some(next_protocol),
@@ -169,7 +176,7 @@ fn start_listening(state: State<'_, Arc<Mutex<AppState>>>, app: AppHandle) {
                 Ok(packet) => {
                     let network_packet = handle_packet(packet, &mut fragmented_packets);
                     if let Some(p) = network_packet {
-                        let _ = app.emit("packet_received", p);
+                        //let _ = app.emit("packet_received", p);
                     }
                 }
                 Err(e) => eprintln!("{e}"),

@@ -1,11 +1,23 @@
+use std::net::IpAddr;
+
+use pnet::packet::ip::IpNextHeaderProtocol;
+
 use crate::{parsers::parser::PacketContext, FragmentedPackets, IpFragmentedPacket};
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+pub struct FragmentedKey {
+    pub src_ip: IpAddr,
+    pub dst_ip: IpAddr,
+    pub protocol: IpNextHeaderProtocol,
+    pub identification: u16,
+}
 
 pub struct Reassembler {}
 
 impl Reassembler {
     pub fn update(fragmented_packets: &mut FragmentedPackets) -> Vec<PacketContext> {
         let mut ctxs = vec![];
-        let done_ids: Vec<u16> = fragmented_packets
+        let done_ids: Vec<FragmentedKey> = fragmented_packets
             .iter()
             .filter_map(|(id, packet)| packet.done.then_some(*id))
             .collect();

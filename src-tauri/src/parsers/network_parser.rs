@@ -1,9 +1,10 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, net::IpAddr};
 
 use pnet::packet::{ipv4::Ipv4Packet, Packet};
 
 use crate::{
     parsers::parser::{LayerParser, PacketContext},
+    reassembler::FragmentedKey,
     Field, FragmentedPackets, IpFragmentedPacket, Layer, OsiLayer,
 };
 
@@ -32,6 +33,13 @@ impl LayerParser for Ipv4NetworkParser {
             Field::new("Flags".to_string(), ip_packet.get_flags().to_string()),
         ];
 
+        let key = FragmentedKey {
+            src_ip: IpAddr::V4(ip_packet.get_source()),
+            dst_ip: IpAddr::V4(ip_packet.get_destination()),
+            protocol: ip_packet.get_next_level_protocol(),
+            identification: ip_packet.get_identification(),
+        };
+
         if fragmented {
             fields.push(Field::new(
                 "Fragmented".to_string(),
@@ -43,8 +51,7 @@ impl LayerParser for Ipv4NetworkParser {
                 return None;
             };
 
-            println!("{:?}", fragmented_packets);
-            if let Some(frag) = fragmented_packets.get_mut(&ip_packet.get_identification()) {
+            if let Some(frag) = fragmented_packets.get_mut(&key) {
                 println!("Existing fragmented packet");
                 frag.fragments.insert(
                     ip_packet.get_fragment_offset() as usize,
@@ -55,8 +62,10 @@ impl LayerParser for Ipv4NetworkParser {
                 }
             } else {
                 fragmented_packets.insert(
-                    ip_packet.get_identification(),
+                    key,
                     IpFragmentedPacket::new_first(
+                        IpAddr::V4(ip_packet.get_source()),
+                        IpAddr::V4(ip_packet.get_destination()),
                         false,
                         ip_packet.get_next_level_protocol(),
                         packet_context.ethertype?,
