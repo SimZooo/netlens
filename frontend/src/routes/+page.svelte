@@ -28,10 +28,9 @@
     onMount(() => {});
 </script>
 
-<div class="h-screen w-screen bg-background grid grid-rows-[4em_auto] min-h-0">
-    <div class="w-full border-b-textd border-b grid grid-rows-2">
-        <div></div>
-        <div class="p-1">
+<div class="h-screen w-full bg-background min-h-0 flex flex-col">
+    <div class="bg-foreground flex flex-col p-2 gap-5">
+        <div class="flex gap-10 align-middle items-center">
             <button
                 title="toggle_listening"
                 class="w-5 h-5"
@@ -40,21 +39,27 @@
                     : "oklch(63.7% 0.237 25.331)"}
                 onclick={() => {
                     listening = !listening;
-                    invoke("set_listen", { val: listening });
+                    invoke("set_listen", {
+                        val: listening,
+                    });
                 }}
             >
             </button>
         </div>
+        <input
+            type="text"
+            class="outline-none bg-background rounded-xs p-0.5 w-full text-textl"
+            placeholder="Apply a filter"
+        />
     </div>
-
-    <div class="flex-1 overflow-hidden text-textl">
+    <div class="flex-1 overflow-hidden text-textl size-full">
         <PaneGroup direction="vertical" class="h-full">
             <Pane>
                 <div class="h-full min-h-0 overflow-auto">
                     <Infinitable.Root
                         bind:items={packets}
                         rowHeight={28}
-                        class="min-h-0"
+                        class="min-h-0 border-0"
                         ignoreInfinite={true}
                     >
                         {#snippet headers()}
@@ -90,30 +95,52 @@
 
                         {#snippet children({ index, selectedCount })}
                             {@const pkt = packets[index]}
-                            <td onclick={() => (selected_packet = pkt.id)}>
+                            <td
+                                onclick={() => (selected_packet = pkt.id)}
+                                class:selected-row={selected_packet === pkt.id}
+                            >
                                 {index}
                             </td>
-                            <td onclick={() => (selected_packet = pkt.id)}>
+                            <td
+                                onclick={() => (selected_packet = pkt.id)}
+                                class:selected-row={selected_packet === pkt.id}
+                            >
                                 {pkt.time}
                             </td>
-                            <td onclick={() => (selected_packet = pkt.id)}>
+                            <td
+                                onclick={() => (selected_packet = pkt.id)}
+                                class:selected-row={selected_packet === pkt.id}
+                            >
                                 {pkt.src}
                             </td>
-                            <td onclick={() => (selected_packet = pkt.id)}>
+                            <td
+                                onclick={() => (selected_packet = pkt.id)}
+                                class:selected-row={selected_packet === pkt.id}
+                            >
                                 {pkt.dst}
                             </td>
-                            <td onclick={() => (selected_packet = pkt.id)}>
+                            <td
+                                onclick={() => (selected_packet = pkt.id)}
+                                class:selected-row={selected_packet === pkt.id}
+                            >
                                 {pkt.last_protocol}
                             </td>
-                            <td onclick={() => (selected_packet = pkt.id)}>
-                                {pkt.length}
+                            <td
+                                onclick={() => (selected_packet = pkt.id)}
+                                class:selected-row={selected_packet === pkt.id}
+                            >
+                                {pkt.raw.length}
                             </td>
-                            <td onclick={() => (selected_packet = pkt.id)}>
+                            <td
+                                onclick={() => (selected_packet = pkt.id)}
+                                class:selected-row={selected_packet === pkt.id}
+                            >
                                 {pkt.info}
                             </td>
                         {/snippet}
                         {#snippet loader()}{/snippet}
                         {#snippet loadingEmpty()}{/snippet}
+                        {#snippet rowsDetail()}{/snippet}
                     </Infinitable.Root>
                 </div>
             </Pane>
@@ -140,5 +167,9 @@
 
     * {
         font-family: "0xProto", sans-serif;
+    }
+
+    .selected-row {
+        background-color: #287df5;
     }
 </style>

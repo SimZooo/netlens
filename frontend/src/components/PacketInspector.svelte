@@ -5,15 +5,21 @@
         LucideChevronDown,
         LucideChevronRight,
     } from "lucide-svelte";
+    import { onMount } from "svelte";
 
     let { packet }: { packet: NetworkPacket } = $props();
+    let expanded_status: boolean[] = $state([]);
 
-    let expanded_status = $state(
-        Array.from({ length: packet.layers.length }, () => false),
-    );
+    $effect(() => {
+        expanded_status = Array.from(
+            { length: packet.layers.length },
+            () => false,
+        );
+    });
 </script>
 
 <div class="size-full p-2">
+    <p>Packet: {packet.id}</p>
     {#each packet.layers as layer, i}
         <div class="w-full h-fit flex flex-col">
             <button
@@ -29,7 +35,7 @@
             {#if expanded_status[i]}
                 <div class="size-full pl-4">
                     {#each layer.fields as field}
-                        <p>{field.name}:&nbsp;{field.value}</p>
+                        <p>{field.name}: {field.value}</p>
                     {/each}
                 </div>
             {/if}
