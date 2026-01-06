@@ -13,7 +13,7 @@ pub struct Ipv6NetworkParser {}
 
 impl LayerParser for Ipv4NetworkParser {
     fn parse(
-        data: &Vec<u8>,
+        _: &Vec<u8>,
         packet_context: &mut PacketContext,
         fragmented_packets: Option<&mut FragmentedPackets>,
     ) -> Option<Layer> {
@@ -85,13 +85,16 @@ impl LayerParser for Ipv4NetworkParser {
                     ),
                 );
             }
-            return None;
         }
 
         packet_context.network_payload = ip_packet.payload().to_vec();
         packet_context.ip_next_level_prot = Some(ip_packet.get_next_level_protocol());
+        // Overwrite MAC address
+        packet_context.src = ip_packet.get_source().to_string();
+        packet_context.dst = ip_packet.get_destination().to_string();
 
         Some(Layer {
+            protocol: ip_packet.get_next_level_protocol().to_string(),
             name: "Ipv4 Packet".to_string(),
             osi_layer: OsiLayer::Network,
             fields,

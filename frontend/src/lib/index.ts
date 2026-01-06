@@ -27,8 +27,10 @@ export type NetworkPacket = {
   timestamp: number;
   raw: number[];
   layers: Layer[];
+  length: number;
   last_protocol: string;
   time: string;
+  info: string;
 };
 
 export function get_top_layer(packet: NetworkPacket): Layer {

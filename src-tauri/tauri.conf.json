@@ -12,7 +12,6 @@
   "app": {
     "windows": [
       {
-        "decorations": false,
         "title": "netlens",
         "width": 1920,
         "height": 1080,

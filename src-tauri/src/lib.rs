@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 
 use std::thread;
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use pnet::datalink::{self, Channel::Ethernet};
 use pnet::packet::ethernet::{EtherType, EtherTypes};
@@ -90,6 +90,7 @@ impl Field {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Layer {
+    pub protocol: String,
     pub name: String,
     pub osi_layer: OsiLayer,
     pub fields: Vec<Field>,
@@ -97,10 +98,13 @@ pub struct Layer {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct NetworkPacket {
+    pub src: String,
+    pub dst: String,
     pub id: String,
-    pub timestamp: SystemTime,
+    pub timestamp: f64,
     pub raw: Vec<u8>,
     pub layers: Vec<Layer>,
+    pub length: usize,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -176,7 +180,7 @@ fn start_listening(state: State<'_, Arc<Mutex<AppState>>>, app: AppHandle) {
                 Ok(packet) => {
                     let network_packet = handle_packet(packet, &mut fragmented_packets);
                     if let Some(p) = network_packet {
-                        //let _ = app.emit("packet_received", p);
+                        let _ = app.emit("packet_received", p);
                     }
                 }
                 Err(e) => eprintln!("{e}"),
@@ -193,10 +197,16 @@ fn start_listening(state: State<'_, Arc<Mutex<AppState>>>, app: AppHandle) {
                 let _ = app.emit(
                     "packet_received",
                     NetworkPacket {
+                        src: packet.src,
+                        dst: packet.dst,
                         id: uuid::Uuid::new_v4().to_string(),
                         layers: vec![transport_layer],
                         raw: packet.network_payload,
-                        timestamp: SystemTime::now(),
+                        timestamp: SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .and_then(|t| Ok(t.as_secs_f64()))
+                            .unwrap_or(0.),
+                        length: 0,
                     },
                 );
             }
@@ -208,24 +218,38 @@ pub fn handle_packet(
     packet: &[u8],
     fragmented_packets: &mut FragmentedPackets,
 ) -> Option<NetworkPacket> {
+    let mut layers = vec![];
     let mut packet_context = PacketContext::default();
     let datalink_layer =
         DatalinkParser::parse(&packet.to_vec(), &mut packet_context, None).unwrap();
+
+    layers.push(datalink_layer);
+
     let ether_type = packet_context.ethertype.unwrap();
 
-    let network_layer = match ether_type {
+    if let Some(network_layer) = match ether_type {
         EtherTypes::Ipv4 => {
-            Ipv4NetworkParser::parse(&vec![], &mut packet_context, Some(fragmented_packets))?
+            Ipv4NetworkParser::parse(&vec![], &mut packet_context, Some(fragmented_packets))
         }
-        _ => return None,
-    };
+        _ => None,
+    } {
+        layers.push(network_layer);
+    }
 
-    let transport_layer = TransportParser::parse(&vec![], &mut packet_context, None)?;
+    if let Some(transport_layer) = TransportParser::parse(&vec![], &mut packet_context, None) {
+        layers.push(transport_layer);
+    }
 
     Some(NetworkPacket {
+        src: packet_context.src,
+        dst: packet_context.dst,
         id: uuid::Uuid::new_v4().to_string(),
-        layers: vec![datalink_layer, network_layer, transport_layer],
+        layers,
         raw: packet.to_vec(),
-        timestamp: SystemTime::now(),
+        timestamp: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .and_then(|t| Ok(t.as_secs_f64()))
+            .unwrap_or(0.),
+        length: packet.len(),
     })
 }

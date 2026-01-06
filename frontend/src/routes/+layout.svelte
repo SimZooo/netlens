@@ -12,4 +12,7 @@
 {@render children()}
 
 <style>
+    * {
+        font-family: "0xProto", sans-serif;
+    }
 </style>

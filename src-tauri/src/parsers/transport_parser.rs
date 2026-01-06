@@ -38,6 +38,7 @@ impl TransportParser {
                 };
 
                 Some(Layer {
+                    protocol: protocol.to_string(),
                     name: "TCP Packet".to_string(),
                     osi_layer: OsiLayer::Transport,
                     fields: vec![
@@ -64,6 +65,7 @@ impl TransportParser {
                 };
 
                 Some(Layer {
+                    protocol: protocol.to_string(),
                     name: "UDP Packet".to_string(),
                     osi_layer: OsiLayer::Transport,
                     fields: vec![
@@ -81,6 +83,7 @@ impl TransportParser {
                 })
             }
             _ => Some(Layer {
+                protocol: protocol.to_string(),
                 name: protocol.to_string(),
                 osi_layer: OsiLayer::Transport,
                 fields: vec![],

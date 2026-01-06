@@ -2,7 +2,14 @@
 
 @theme {
     --color-background: #1e2022;
-    --color-foreground: #52616b;
+    --color-foreground: #323539;
     --color-textd: #c9d6df;
     --color-textl: #f0f5f9;
+}
+@font-face {
+    font-family: "0xProto";
+    src: url("/fonts/0xProto-Regular.ttf") format("truetype");
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
 }

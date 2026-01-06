@@ -42,6 +42,8 @@ impl Reassembler {
             packet_context.ethertype = frag.ethertype;
             packet_context.ip_next_level_prot = frag.next_protocol;
 
+            // Todo: keep reference to fragments and link IDs between defragmented and fragments
+
             ctxs.push(packet_context);
         }
 

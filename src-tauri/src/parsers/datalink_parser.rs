@@ -31,8 +31,11 @@ impl LayerParser for DatalinkParser {
         packet_context.datalink_payload = ethernet_packet.payload().to_vec();
         packet_context.network_payload = vec![];
         packet_context.ip_next_level_prot = None;
+        packet_context.src = ethernet_packet.get_source().to_string();
+        packet_context.dst = ethernet_packet.get_destination().to_string();
 
         Some(Layer {
+            protocol: "Ethernet".to_string(),
             name: "Ethernet Frame".to_string(),
             osi_layer: OsiLayer::DataLink,
             fields: vec![

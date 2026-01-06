@@ -43,6 +43,9 @@ Reassemble packet fragments
 
 [Todo next]
 FOCUS ON BACKEND
+    Find some way to decide what the info field should show. It can be information about the top level packet, or if its an IP fragment, the link to the defragmented frame
+    Parse Tcp Flags
+    Parse non-transport protocols (e.g. using serde and have a map of wanted fields for each protocol. probably slow)
     ** Handle TCP segments **
 
     ** Either make a custom parsing library for layer 5-7 or use something like etherparse **
