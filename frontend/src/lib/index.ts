@@ -14,16 +14,21 @@ export type Field = {
 };
 
 export type Layer = {
+  protocol: string;
   name: string;
   osi_layer: OsiLayer;
   fields: Field[];
 };
 
 export type NetworkPacket = {
+  src: string;
+  dst: string;
   id: string;
-  timestamp: string;
+  timestamp: number;
   raw: number[];
   layers: Layer[];
+  last_protocol: string;
+  time: string;
 };
 
 export function get_top_layer(packet: NetworkPacket): Layer {
