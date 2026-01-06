@@ -139,9 +139,7 @@ fn set_listen(val: bool, state: State<'_, Arc<Mutex<AppState>>>) {
     let Ok(mut state) = state.lock() else {
         return;
     };
-
     println!("Set listen to {val}");
-
     state.listen = val;
 }
 
