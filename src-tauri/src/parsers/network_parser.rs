@@ -31,6 +31,11 @@ impl LayerParser for Ipv4NetworkParser {
             ),
             Field::new("TTL".to_string(), ip_packet.get_ttl().to_string()),
             Field::new("Flags".to_string(), ip_packet.get_flags().to_string()),
+            Field::new(
+                "Identification".to_string(),
+                ip_packet.get_identification().to_string(),
+            ),
+            Field::new("Version".to_string(), ip_packet.get_version().to_string()),
         ];
 
         let key = FragmentedKey {
@@ -95,7 +100,7 @@ impl LayerParser for Ipv4NetworkParser {
 
         Some(Layer {
             protocol: ip_packet.get_next_level_protocol().to_string(),
-            name: "Ipv4 Packet".to_string(),
+            name: "Internet Protocol Version 4".to_string(),
             osi_layer: OsiLayer::Network,
             fields,
         })

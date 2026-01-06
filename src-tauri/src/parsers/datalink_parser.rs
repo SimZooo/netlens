@@ -40,11 +40,11 @@ impl LayerParser for DatalinkParser {
             osi_layer: OsiLayer::DataLink,
             fields: vec![
                 Field::new(
-                    "Source MAC".to_string(),
+                    "Source".to_string(),
                     format!("{:02x?}", ethernet_packet.get_source()),
                 ),
                 Field::new(
-                    "Destination MAC".to_string(),
+                    "Destination".to_string(),
                     format!("{:02x?}", ethernet_packet.get_destination()),
                 ),
                 Field::new(
