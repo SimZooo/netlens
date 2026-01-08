@@ -13,11 +13,12 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tauri::{Manager, State};
 
-use parsers::datalink_parser::DatalinkParser;
-use parsers::network_parser::Ipv4NetworkParser;
+use parsers::datalink_parser::EthernetParser;
 use parsers::parser::{LayerParser, PacketContext};
-use parsers::transport_parser::TransportParser;
 
+use crate::parsers::network_parser::{Ipv4Parser, Ipv6Parser};
+use crate::parsers::transport_parser::TcpParser;
+use crate::protocols::{ProtocolNames, PROTOCOLS};
 use crate::reassembler::{FragmentedKey, Reassembler};
 
 pub struct AppState {
@@ -26,6 +27,7 @@ pub struct AppState {
 }
 
 mod parsers;
+mod protocols;
 mod reassembler;
 
 pub type FragmentedPackets = BTreeMap<FragmentedKey, IpFragmentedPacket>;
@@ -65,8 +67,9 @@ impl IpFragmentedPacket {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize)]
+#[derive(Debug, PartialEq, Clone, Serialize, Default)]
 pub enum OsiLayer {
+    #[default]
     Physical,
     DataLink,
     Network,
@@ -186,8 +189,7 @@ fn start_listening(state: State<'_, Arc<Mutex<AppState>>>, app: AppHandle) {
 
             let reassembled_packets = Reassembler::update(&mut fragmented_packets);
             for mut packet in reassembled_packets {
-                let Some(transport_layer) = TransportParser::parse(&vec![], &mut packet, None)
-                else {
+                let Some(transport_layer) = TcpParser::parse(&vec![], &mut packet, None) else {
                     println!("Invalid transport layer in fragmented packet");
                     continue;
                 };
@@ -198,7 +200,7 @@ fn start_listening(state: State<'_, Arc<Mutex<AppState>>>, app: AppHandle) {
                         src: packet.src,
                         dst: packet.dst,
                         id: uuid::Uuid::new_v4().to_string(),
-                        layers: vec![transport_layer],
+                        layers: transport_layer,
                         raw: packet.network_payload,
                         timestamp: SystemTime::now()
                             .duration_since(UNIX_EPOCH)
@@ -218,24 +220,37 @@ pub fn handle_packet(
 ) -> Option<NetworkPacket> {
     let mut layers = vec![];
     let mut packet_context = PacketContext::default();
-    let datalink_layer =
-        DatalinkParser::parse(&packet.to_vec(), &mut packet_context, None).unwrap();
+    let datalink_layers =
+        EthernetParser::parse(&packet.to_vec(), &mut packet_context, None).unwrap();
 
-    layers.push(datalink_layer);
-
-    let ether_type = packet_context.ethertype.unwrap();
-
-    if let Some(network_layer) = match ether_type {
-        EtherTypes::Ipv4 => {
-            Ipv4NetworkParser::parse(&vec![], &mut packet_context, Some(fragmented_packets))
-        }
-        _ => None,
-    } {
-        layers.push(network_layer);
+    for layer in datalink_layers {
+        layers.push(layer);
     }
 
-    if let Some(transport_layer) = TransportParser::parse(&vec![], &mut packet_context, None) {
-        layers.push(transport_layer);
+    let mut last_protocol = "".to_string();
+    loop {
+        let mut matched = false;
+        for protocol in PROTOCOLS {
+            if protocol.name.to_string() == packet_context.next_protocol {
+                matched = true;
+                if let Some(protocol_parser) = protocol.parser {
+                    let prot_layers =
+                        (protocol_parser)(&vec![], &mut packet_context, Some(fragmented_packets));
+                    for layer in prot_layers.unwrap_or(vec![]) {
+                        if protocol.name == ProtocolNames::Arp {
+                            println!("yessir");
+                        }
+                        layers.push(layer);
+                    }
+                }
+                break;
+            }
+        }
+        if !matched || last_protocol == packet_context.next_protocol {
+            break;
+        }
+
+        last_protocol = packet_context.next_protocol.clone();
     }
 
     Some(NetworkPacket {

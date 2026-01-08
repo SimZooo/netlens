@@ -6,23 +6,25 @@
     import type { NetworkPacket } from "$lib";
     import { onMount } from "svelte";
     import PacketInspector from "../components/PacketInspector.svelte";
+    import { writable, type Writable } from "svelte/store";
 
     let listening = $state(false);
-    let packets: NetworkPacket[] = $state([]);
+    let packets: Writable<NetworkPacket[]> = writable([]);
     let selected_packet = $state();
 
     listen<NetworkPacket>("packet_received", (e) => {
         let pkt = e.payload;
+        let last_layer = pkt.layers.at(-1);
         pkt.last_protocol = pkt.layers.at(-1)?.protocol!;
         pkt.time = new Date(pkt.timestamp * 1000).toLocaleTimeString(); // Switch to time since execution?
-        pkt.info = pkt.layers
-            .at(-1)
-            ?.fields.map((val) => {
-                let res = val.name.concat(...[":", val.value]);
-                return res;
-            })
-            .join(" ")!;
-        packets = [...packets, e.payload];
+        pkt.info = (last_layer?.fields ?? [])
+            .map((f) => `${f.name}:${f.value}`)
+            .join(" ");
+
+        packets.update((pkts) => {
+            pkts.push(e.payload);
+            return pkts;
+        });
     });
 
     onMount(() => {});
@@ -57,7 +59,7 @@
             <Pane>
                 <div class="h-full min-h-0 overflow-auto">
                     <Infinitable.Root
-                        bind:items={packets}
+                        bind:items={$packets}
                         rowHeight={28}
                         class="min-h-0 border-0"
                         ignoreInfinite={true}
@@ -94,7 +96,7 @@
                         {/snippet}
 
                         {#snippet children({ index, selectedCount })}
-                            {@const pkt = packets[index]}
+                            {@const pkt = $packets[index]}
                             <td
                                 onclick={() => (selected_packet = pkt.id)}
                                 class:selected-row={selected_packet === pkt.id}
@@ -149,7 +151,7 @@
                 <PaneResizer class="w-full h-1 border-t-textd border-t" />
                 <Pane defaultSize={35} class="grid grid-rows-2">
                     <PacketInspector
-                        packet={packets.find((p) => p.id === selected_packet)!}
+                        packet={$packets.find((p) => p.id === selected_packet)!}
                     ></PacketInspector>
                 </Pane>
             {/if}

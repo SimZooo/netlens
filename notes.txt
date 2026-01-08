@@ -40,6 +40,9 @@ TCP Packet
 Seperate layers into "handlers/files"
 Reassemble packet fragments
     Index by 4-tuple object
+Make UI look better
+Handle IPv6
+    For extensions, parse each extension in order
 
 [Todo next]
 FOCUS ON BACKEND
@@ -47,22 +50,22 @@ FOCUS ON BACKEND
     Parse Tcp Flags
     Parse non-transport protocols (e.g. using serde and have a map of wanted fields for each protocol. probably slow)
     ** Handle TCP segments **
+    Filtering logic, like what to ignore (Icmp tf)
 
     ** Either make a custom parsing library for layer 5-7 or use something like etherparse **
 
-    Handle IPv6
-
-    Give ability to follow a TCP Stream
+    Give ability to follow a TCP Stream (stream ID)
         Use both IP-address as well as TCP Port
         Handle IP and TCP port for both Client and Server
     Same for UDP
+    Make IPv6 parsing better?
+    Parse ICMP codes and types
 
 Warn if checksums are wrong
-Make UI look better
 
 [Thoughts]
 ** Fragment Manager ? **
-Detect fragment overlapping and check for fragment completeness
+Detect fragment overlapping and check for fragment completeness (not my job? but could warn user)
 Think about how to structure a "flow", or packets that belong together
 4-tuple struct for easy comparison?
 ** Pipeline object to define a custom pipeline of layer parsers? **

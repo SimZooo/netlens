@@ -1,8 +1,6 @@
-use std::net::IpAddr;
+use pnet::packet::ethernet::EtherType;
 
-use pnet::packet::{ethernet::EtherType, ip::IpNextHeaderProtocol};
-
-use crate::{FragmentedPackets, Layer};
+use crate::{protocols::ProtocolNames, FragmentedPackets, Layer};
 
 #[derive(Clone, Default)]
 pub struct PacketContext {
@@ -11,7 +9,7 @@ pub struct PacketContext {
     pub ethertype: Option<EtherType>,
     pub datalink_payload: Vec<u8>,
     pub network_payload: Vec<u8>,
-    pub ip_next_level_prot: Option<IpNextHeaderProtocol>,
+    pub next_protocol: String,
 }
 
 pub trait LayerParser {
@@ -19,5 +17,5 @@ pub trait LayerParser {
         data: &Vec<u8>,
         packet_context: &mut PacketContext,
         fragmented_packets: Option<&mut FragmentedPackets>,
-    ) -> Option<Layer>;
+    ) -> Option<Vec<Layer>>;
 }

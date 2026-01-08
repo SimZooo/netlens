@@ -40,7 +40,7 @@ impl Reassembler {
             let mut packet_context = PacketContext::default();
             packet_context.network_payload = buffer;
             packet_context.ethertype = frag.ethertype;
-            packet_context.ip_next_level_prot = frag.next_protocol;
+            packet_context.next_protocol = frag.next_protocol.unwrap().to_string();
 
             // Todo: keep reference to fragments and link IDs between defragmented and fragments
 
