@@ -1,8 +1,19 @@
-use std::net::IpAddr;
+use std::{collections::BTreeMap, net::IpAddr};
 
-use pnet::packet::ip::IpNextHeaderProtocol;
+use pnet::packet::{ethernet::EtherType, ip::IpNextHeaderProtocol};
 
-use crate::{parsers::parser::PacketContext, FragmentedPackets, IpFragmentedPacket};
+use crate::{parsers::parser::ParseResult, protocols::ProtocolId, Field, Layer, OsiLayer};
+
+pub type FragmentedPackets = BTreeMap<FragmentedKey, IpFragmentedPacket>;
+
+#[derive(Default, Debug)]
+pub struct IpFragmentedPacket {
+    pub done: bool,
+    pub ethertype: Option<EtherType>,
+    pub next_protocol: Option<IpNextHeaderProtocol>,
+    pub fragments: BTreeMap<usize, Vec<u8>>,
+    pub fields: Vec<Field>,
+}
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 pub struct FragmentedKey {
@@ -12,11 +23,34 @@ pub struct FragmentedKey {
     pub identification: u16,
 }
 
+impl IpFragmentedPacket {
+    /// Create new fragmented packet with the first fragment
+    pub fn new_first(
+        done: bool,
+        next_protocol: IpNextHeaderProtocol,
+        ethertype: EtherType,
+        fragment: Vec<u8>,
+        byte_offset: usize,
+        fields: Vec<Field>,
+    ) -> Self {
+        let mut fragments = BTreeMap::new();
+        fragments.insert(byte_offset, fragment);
+
+        Self {
+            done,
+            ethertype: Some(ethertype),
+            next_protocol: Some(next_protocol),
+            fragments,
+            fields,
+        }
+    }
+}
+
 pub struct Reassembler {}
 
 impl Reassembler {
-    pub fn update(fragmented_packets: &mut FragmentedPackets) -> Vec<PacketContext> {
-        let mut ctxs = vec![];
+    pub fn update(fragmented_packets: &mut FragmentedPackets) -> Vec<ParseResult> {
+        let mut results = vec![];
         let done_ids: Vec<FragmentedKey> = fragmented_packets
             .iter()
             .filter_map(|(id, packet)| packet.done.then_some(*id))
@@ -28,25 +62,39 @@ impl Reassembler {
                 continue;
             };
 
+            let mut fields = frag.fields;
+
             let (last_offset, last_frag) = frag.fragments.iter().last().unwrap();
             let buffer_len = last_offset * 8 + last_frag.len();
             let mut buffer = vec![0u8; buffer_len];
+            let n = frag.fragments.len();
             for (offset, data) in frag.fragments {
                 let start = offset;
                 let end = start + data.len();
                 buffer[start..end].copy_from_slice(&data);
             }
 
-            let mut packet_context = PacketContext::default();
-            packet_context.network_payload = buffer;
-            packet_context.ethertype = frag.ethertype;
-            packet_context.next_protocol = frag.next_protocol.unwrap().to_string();
-
             // Todo: keep reference to fragments and link IDs between defragmented and fragments
-
-            ctxs.push(packet_context);
+            let next = frag
+                .next_protocol
+                .and_then(|p| Some(ProtocolId::from_ip(p)))
+                .unwrap_or(ProtocolId::None);
+            fields.push(Field::new(
+                "Defragmented".to_string(),
+                format!("{} Fragments", n),
+            ));
+            results.push(ParseResult {
+                layer: Layer {
+                    name: "Internet Protocol Version 4".to_string(),
+                    protocol: next.to_string(),
+                    osi_layer: OsiLayer::Network,
+                    fields,
+                },
+                next,
+                remaining: buffer,
+            });
         }
 
-        ctxs
+        results
     }
 }

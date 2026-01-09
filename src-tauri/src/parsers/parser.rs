@@ -1,21 +1,24 @@
-use pnet::packet::ethernet::EtherType;
+use crate::{protocols::ProtocolId, reassembler::FragmentedPackets, Layer};
 
-use crate::{protocols::ProtocolNames, FragmentedPackets, Layer};
+pub struct ParseInput<'a> {
+    pub bytes: &'a [u8],
+}
 
-#[derive(Clone, Default)]
-pub struct PacketContext {
-    pub src: String,
-    pub dst: String,
-    pub ethertype: Option<EtherType>,
-    pub datalink_payload: Vec<u8>,
-    pub network_payload: Vec<u8>,
-    pub next_protocol: String,
+pub struct ParseResult {
+    pub layer: Layer,
+    pub next: ProtocolId,
+    pub remaining: Vec<u8>,
+}
+
+pub enum ParseOutcome {
+    Continue(ProtocolId),
+    Stop,
+    Fragmented,
 }
 
 pub trait LayerParser {
     fn parse(
-        data: &Vec<u8>,
-        packet_context: &mut PacketContext,
+        input: &[u8],
         fragmented_packets: Option<&mut FragmentedPackets>,
-    ) -> Option<Vec<Layer>>;
+    ) -> Option<ParseResult>;
 }

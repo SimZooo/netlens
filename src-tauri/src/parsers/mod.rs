@@ -1,3 +1,4 @@
+pub mod application_parser;
 pub mod datalink_parser;
 pub mod network_parser;
 pub mod parser;

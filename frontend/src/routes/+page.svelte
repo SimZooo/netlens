@@ -11,6 +11,8 @@
     let listening = $state(false);
     let packets: Writable<NetworkPacket[]> = writable([]);
     let selected_packet = $state();
+    let packets_buffer: NetworkPacket[] = [];
+    let flush_scheduled = false;
 
     listen<NetworkPacket>("packet_received", (e) => {
         let pkt = e.payload;
@@ -21,11 +23,23 @@
             .map((f) => `${f.name}:${f.value}`)
             .join(" ");
 
+        packets_buffer.push(pkt);
+
+        if (!flush_scheduled) {
+            flush_scheduled = true;
+            requestAnimationFrame(flush_packets);
+        }
+    });
+
+    function flush_packets() {
         packets.update((pkts) => {
-            pkts.push(e.payload);
+            pkts.push(...packets_buffer);
             return pkts;
         });
-    });
+        packets_buffer = [];
+
+        flush_scheduled = false;
+    }
 
     onMount(() => {});
 </script>

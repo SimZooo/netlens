@@ -1,6 +1,7 @@
 use std::net::IpAddr;
 
 use pnet::packet::{
+    ethernet::EtherTypes,
     icmp::{IcmpCode, IcmpPacket, IcmpType, IcmpTypes},
     icmpv6::Icmpv6Packet,
     ip::{IpNextHeaderProtocol, IpNextHeaderProtocols},
@@ -10,9 +11,10 @@ use pnet::packet::{
 };
 
 use crate::{
-    parsers::parser::{LayerParser, PacketContext},
-    reassembler::FragmentedKey,
-    Field, FragmentedPackets, IpFragmentedPacket, Layer, OsiLayer,
+    parsers::parser::{LayerParser, ParseInput, ParseResult},
+    protocols::ProtocolId,
+    reassembler::{FragmentedKey, FragmentedPackets, IpFragmentedPacket},
+    Field, Layer, OsiLayer,
 };
 
 pub struct Ipv4Parser;
@@ -22,20 +24,18 @@ pub struct Icmpv6Parser;
 
 impl LayerParser for Ipv4Parser {
     fn parse(
-        _: &Vec<u8>,
-        packet_context: &mut PacketContext,
+        input: &[u8],
         fragmented_packets: Option<&mut FragmentedPackets>,
-    ) -> Option<Vec<Layer>> {
-        let Some(ip_packet) = Ipv4Packet::new(&packet_context.datalink_payload[..]) else {
-            return None;
-        };
+    ) -> Option<ParseResult> {
+        let ip_packet = Ipv4Packet::new(&input)?;
         let fragmented =
             (ip_packet.get_flags() & 0b001) != 0 || ip_packet.get_fragment_offset() != 0;
+        let mut next = ProtocolId::from_ip(ip_packet.get_next_level_protocol());
 
         let mut fields = vec![
-            Field::new("Source IP".to_string(), ip_packet.get_source().to_string()),
+            Field::new("Source".to_string(), ip_packet.get_source().to_string()),
             Field::new(
-                "Destination IP".to_string(),
+                "Destination".to_string(),
                 ip_packet.get_destination().to_string(),
             ),
             Field::new("TTL".to_string(), ip_packet.get_ttl().to_string()),
@@ -55,11 +55,7 @@ impl LayerParser for Ipv4Parser {
         };
 
         if fragmented {
-            fields.push(Field::new(
-                "Fragmented".to_string(),
-                format!("Offset: {}", ip_packet.get_fragment_offset().to_string()),
-            ));
-
+            next = ProtocolId::None;
             let Some(fragmented_packets) = fragmented_packets else {
                 println!("Fragmented Packets is None in NetworkParser, must be Some");
                 return None;
@@ -89,42 +85,41 @@ impl LayerParser for Ipv4Parser {
                 fragmented_packets.insert(
                     key,
                     IpFragmentedPacket::new_first(
-                        IpAddr::V4(ip_packet.get_source()),
-                        IpAddr::V4(ip_packet.get_destination()),
                         false,
                         ip_packet.get_next_level_protocol(),
-                        packet_context.ethertype?,
+                        EtherTypes::Ipv4,
                         ip_packet.payload().to_vec(),
                         ip_packet.get_fragment_offset() as usize,
+                        fields.clone(),
                     ),
                 );
             }
+
+            fields.insert(
+                0,
+                Field::new(
+                    "Fragmented".to_string(),
+                    format!("Offset: {}", ip_packet.get_fragment_offset().to_string()),
+                ),
+            );
         }
 
-        packet_context.network_payload = ip_packet.payload().to_vec();
-        packet_context.next_protocol = ip_packet.get_next_level_protocol().to_string();
-        // Overwrite MAC address
-        packet_context.src = ip_packet.get_source().to_string();
-        packet_context.dst = ip_packet.get_destination().to_string();
-
-        Some(vec![Layer {
-            protocol: ip_packet.get_next_level_protocol().to_string(),
-            name: "Internet Protocol Version 4".to_string(),
-            osi_layer: OsiLayer::Network,
-            fields,
-        }])
+        Some(ParseResult {
+            layer: Layer {
+                protocol: ip_packet.get_next_level_protocol().to_string(),
+                name: "Internet Protocol Version 4".to_string(),
+                osi_layer: OsiLayer::Network,
+                fields,
+            },
+            next,
+            remaining: ip_packet.payload().to_vec(),
+        })
     }
 }
 
 impl LayerParser for Ipv6Parser {
-    fn parse(
-        d: &Vec<u8>,
-        packet_context: &mut PacketContext,
-        frag_pkts: Option<&mut FragmentedPackets>,
-    ) -> Option<Vec<Layer>> {
-        let mut layers = vec![];
-        let datalink_payload = packet_context.datalink_payload.clone();
-        let ip_packet = Ipv6Packet::new(&datalink_payload)?;
+    fn parse(input: &[u8], _: Option<&mut FragmentedPackets>) -> Option<ParseResult> {
+        let ip_packet = Ipv6Packet::new(&input)?;
         let mut fields = vec![
             Field::new("Source".to_string(), ip_packet.get_source().to_string()),
             Field::new(
@@ -155,7 +150,7 @@ impl LayerParser for Ipv6Parser {
                 | IpNextHeaderProtocols::Udp
                 | IpNextHeaderProtocols::Icmpv6
                 | IpNextHeaderProtocols::Icmp => {
-                    packet_context.network_payload = ext.payload().to_vec();
+                    break;
                 }
                 _ => fields.push(Field::new(
                     "Ipv6 Extension".to_string(),
@@ -165,81 +160,75 @@ impl LayerParser for Ipv6Parser {
             top_level_protocol = Some(ext.get_next_header());
         }
 
-        layers.push(Layer {
-            protocol: "Ipv6".to_string(),
-            name: "Internet Protocol Version 6".to_string(),
-            osi_layer: OsiLayer::Network,
-            fields,
-        });
-
-        if let Some(prot) = top_level_protocol {
-            packet_context.next_protocol = prot.to_string();
-        }
-
-        packet_context.src = ip_packet.get_source().to_string();
-        packet_context.dst = ip_packet.get_destination().to_string();
-        packet_context.next_protocol = top_level_protocol.and_then(|p| Some(p.to_string()))?;
-
-        Some(layers)
+        Some(ParseResult {
+            layer: Layer {
+                protocol: "Ipv6".to_string(),
+                name: "Internet Protocol Version 6".to_string(),
+                osi_layer: OsiLayer::Network,
+                fields,
+            },
+            next: ProtocolId::from_ip(top_level_protocol.unwrap_or(ip_packet.get_next_header())),
+            remaining: ip_packet.payload().to_vec(),
+        })
     }
 }
 
 impl LayerParser for IcmpParser {
-    fn parse(
-        _: &Vec<u8>,
-        packet_context: &mut PacketContext,
-        _: Option<&mut FragmentedPackets>,
-    ) -> Option<Vec<Layer>> {
-        let icmp_packet = IcmpPacket::new(&packet_context.network_payload)?;
-        Some(vec![Layer {
-            name: "Icmp Packet".to_string(),
-            protocol: "Icmp".to_string(),
-            osi_layer: OsiLayer::Network,
-            fields: vec![
-                Field::new(
-                    "ICMP Type".to_string(),
-                    Self::icmp_type(icmp_packet.get_icmp_type()).to_string(),
-                ),
-                Field::new(
-                    "ICMP Code".to_string(),
-                    Self::icmp_code(icmp_packet.get_icmp_code()).to_string(),
-                ),
-                Field::new(
-                    "Checksum".to_string(),
-                    icmp_packet.get_checksum().to_string(),
-                ),
-            ],
-        }])
+    fn parse(input: &[u8], _: Option<&mut FragmentedPackets>) -> Option<ParseResult> {
+        let icmp_packet = IcmpPacket::new(&input)?;
+        println!("heyo");
+        Some(ParseResult {
+            layer: Layer {
+                name: "Icmp Packet".to_string(),
+                protocol: "Icmp".to_string(),
+                osi_layer: OsiLayer::Network,
+                fields: vec![
+                    Field::new(
+                        "ICMP Type".to_string(),
+                        Self::icmp_type(icmp_packet.get_icmp_type()).to_string(),
+                    ),
+                    Field::new(
+                        "ICMP Code".to_string(),
+                        Self::icmp_code(icmp_packet.get_icmp_code()).to_string(),
+                    ),
+                    Field::new(
+                        "Checksum".to_string(),
+                        icmp_packet.get_checksum().to_string(),
+                    ),
+                ],
+            },
+            next: ProtocolId::None,
+            remaining: icmp_packet.payload().to_vec(),
+        })
     }
 }
 
 impl LayerParser for Icmpv6Parser {
-    fn parse(
-        _: &Vec<u8>,
-        packet_context: &mut PacketContext,
-        _: Option<&mut FragmentedPackets>,
-    ) -> Option<Vec<Layer>> {
-        let icmp_packet = Icmpv6Packet::new(&packet_context.network_payload)?;
-        packet_context.next_protocol = "".to_string();
-        Some(vec![Layer {
-            name: "Icmpv6 Packet".to_string(),
-            protocol: "Icmpv6".to_string(),
-            osi_layer: OsiLayer::Network,
-            fields: vec![
-                Field::new(
-                    "ICMP Type".to_string(),
-                    format!("{:?}", icmp_packet.get_icmpv6_type()),
-                ),
-                Field::new(
-                    "ICMP Code".to_string(),
-                    format!("{:?}", icmp_packet.get_icmpv6_code()),
-                ),
-                Field::new(
-                    "Checksum".to_string(),
-                    icmp_packet.get_checksum().to_string(),
-                ),
-            ],
-        }])
+    fn parse(input: &[u8], _: Option<&mut FragmentedPackets>) -> Option<ParseResult> {
+        let icmp_packet = Icmpv6Packet::new(&input)?;
+        Some(ParseResult {
+            layer: Layer {
+                name: "Icmpv6 Packet".to_string(),
+                protocol: "Icmpv6".to_string(),
+                osi_layer: OsiLayer::Network,
+                fields: vec![
+                    Field::new(
+                        "ICMP Type".to_string(),
+                        format!("{:?}", icmp_packet.get_icmpv6_type()),
+                    ),
+                    Field::new(
+                        "ICMP Code".to_string(),
+                        format!("{:?}", icmp_packet.get_icmpv6_code()),
+                    ),
+                    Field::new(
+                        "Checksum".to_string(),
+                        icmp_packet.get_checksum().to_string(),
+                    ),
+                ],
+            },
+            next: ProtocolId::None,
+            remaining: icmp_packet.payload().to_vec(),
+        })
     }
 }
 

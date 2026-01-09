@@ -3,23 +3,18 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use pnet::datalink::{self, Channel::Ethernet};
-use pnet::packet::ethernet::{EtherType, EtherTypes};
+use pnet::packet::ethernet::EtherType;
 
 use pnet::packet::ip::IpNextHeaderProtocol;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tauri::{Manager, State};
 
-use parsers::datalink_parser::EthernetParser;
-use parsers::parser::{LayerParser, PacketContext};
-
-use crate::parsers::network_parser::{Ipv4Parser, Ipv6Parser};
-use crate::parsers::transport_parser::TcpParser;
-use crate::protocols::{ProtocolNames, PROTOCOLS};
-use crate::reassembler::{FragmentedKey, Reassembler};
+use crate::protocols::{ProtocolId, PROTOCOLS};
+use crate::reassembler::{FragmentedKey, FragmentedPackets, Reassembler};
 
 pub struct AppState {
     interface: Option<String>,
@@ -29,43 +24,6 @@ pub struct AppState {
 mod parsers;
 mod protocols;
 mod reassembler;
-
-pub type FragmentedPackets = BTreeMap<FragmentedKey, IpFragmentedPacket>;
-
-#[derive(Default, Debug)]
-pub struct IpFragmentedPacket {
-    done: bool,
-    src_ip: Option<IpAddr>,
-    dst_ip: Option<IpAddr>,
-    ethertype: Option<EtherType>,
-    next_protocol: Option<IpNextHeaderProtocol>,
-    fragments: BTreeMap<usize, Vec<u8>>,
-}
-
-impl IpFragmentedPacket {
-    /// Create new fragmented packet with the first fragment
-    fn new_first(
-        src_ip: IpAddr,
-        dst_ip: IpAddr,
-        done: bool,
-        next_protocol: IpNextHeaderProtocol,
-        ethertype: EtherType,
-        fragment: Vec<u8>,
-        byte_offset: usize,
-    ) -> Self {
-        let mut fragments = BTreeMap::new();
-        fragments.insert(byte_offset, fragment);
-
-        Self {
-            src_ip: Some(src_ip),
-            dst_ip: Some(dst_ip),
-            done,
-            ethertype: Some(ethertype),
-            next_protocol: Some(next_protocol),
-            fragments,
-        }
-    }
-}
 
 #[derive(Debug, PartialEq, Clone, Serialize, Default)]
 pub enum OsiLayer {
@@ -79,7 +37,7 @@ pub enum OsiLayer {
     Application,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Field {
     pub name: String,
     pub value: String,
@@ -175,6 +133,7 @@ fn start_listening(state: State<'_, Arc<Mutex<AppState>>>, app: AppHandle) {
             };
 
             if !listen {
+                thread::sleep(Duration::from_millis(50));
                 continue;
             }
             match rx.next() {
@@ -188,27 +147,11 @@ fn start_listening(state: State<'_, Arc<Mutex<AppState>>>, app: AppHandle) {
             }
 
             let reassembled_packets = Reassembler::update(&mut fragmented_packets);
-            for mut packet in reassembled_packets {
-                let Some(transport_layer) = TcpParser::parse(&vec![], &mut packet, None) else {
-                    println!("Invalid transport layer in fragmented packet");
-                    continue;
-                };
-
-                let _ = app.emit(
-                    "packet_received",
-                    NetworkPacket {
-                        src: packet.src,
-                        dst: packet.dst,
-                        id: uuid::Uuid::new_v4().to_string(),
-                        layers: transport_layer,
-                        raw: packet.network_payload,
-                        timestamp: SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .and_then(|t| Ok(t.as_secs_f64()))
-                            .unwrap_or(0.),
-                        length: 0,
-                    },
-                );
+            for packet in reassembled_packets {
+                let p = handle_packet(&packet.remaining, &mut fragmented_packets);
+                if let Some(p) = p {
+                    let _ = app.emit("packet_received", p);
+                }
             }
         }
     });
@@ -219,43 +162,56 @@ pub fn handle_packet(
     fragmented_packets: &mut FragmentedPackets,
 ) -> Option<NetworkPacket> {
     let mut layers = vec![];
-    let mut packet_context = PacketContext::default();
-    let datalink_layers =
-        EthernetParser::parse(&packet.to_vec(), &mut packet_context, None).unwrap();
+    let mut next = ProtocolId::Ethernet;
+    let mut bytes = packet.to_vec();
 
-    for layer in datalink_layers {
-        layers.push(layer);
-    }
-
-    let mut last_protocol = "".to_string();
-    loop {
-        let mut matched = false;
+    while next != ProtocolId::None {
         for protocol in PROTOCOLS {
-            if protocol.name.to_string() == packet_context.next_protocol {
-                matched = true;
-                if let Some(protocol_parser) = protocol.parser {
-                    let prot_layers =
-                        (protocol_parser)(&vec![], &mut packet_context, Some(fragmented_packets));
-                    for layer in prot_layers.unwrap_or(vec![]) {
-                        if protocol.name == ProtocolNames::Arp {
-                            println!("yessir");
-                        }
-                        layers.push(layer);
-                    }
-                }
-                break;
+            if protocol.name != next {
+                continue;
+            }
+
+            let parser = protocol.parser?;
+
+            let prot_res = (parser)(&bytes, Some(fragmented_packets));
+            if let Some(parse_res) = prot_res {
+                layers.push(parse_res.layer);
+                bytes = parse_res.remaining.to_vec();
+                next = parse_res.next;
+            } else {
+                next = ProtocolId::None;
             }
         }
-        if !matched || last_protocol == packet_context.next_protocol {
-            break;
-        }
+    }
 
-        last_protocol = packet_context.next_protocol.clone();
+    // Prefer Network layer, fallback to DataLink
+    let mut src = "".to_string();
+    let mut dst = "".to_string();
+    for layer in layers.iter().filter(|l| l.osi_layer == OsiLayer::Network) {
+        for field in &layer.fields {
+            match field.name.as_str() {
+                "Source" | "src" => src = field.value.clone(),
+                "Destination" | "dst" => dst = field.value.clone(),
+                _ => {}
+            }
+        }
+    }
+
+    if src.is_empty() || dst.is_empty() {
+        for layer in layers.iter().filter(|l| l.osi_layer == OsiLayer::DataLink) {
+            for field in &layer.fields {
+                match field.name.as_str() {
+                    "Source" | "src" => src = field.value.clone(),
+                    "Destination" | "dst" => dst = field.value.clone(),
+                    _ => {}
+                }
+            }
+        }
     }
 
     Some(NetworkPacket {
-        src: packet_context.src,
-        dst: packet_context.dst,
+        src,
+        dst,
         id: uuid::Uuid::new_v4().to_string(),
         layers,
         raw: packet.to_vec(),

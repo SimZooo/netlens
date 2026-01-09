@@ -1,59 +1,43 @@
-use std::collections::{BTreeMap, HashMap};
-
-use pnet::packet::{
-    arp::ArpPacket,
-    ethernet::{EtherType, EtherTypes, EthernetPacket},
-    Packet,
-};
+use pnet::packet::{arp::ArpPacket, ethernet::EthernetPacket, Packet};
 
 use crate::{
-    parsers::parser::{LayerParser, PacketContext},
-    Field, FragmentedPackets, IpFragmentedPacket, Layer, OsiLayer,
+    parsers::parser::{LayerParser, ParseInput, ParseResult},
+    protocols::ProtocolId,
+    reassembler::FragmentedPackets,
+    Field, Layer, OsiLayer,
 };
 
 pub struct EthernetParser {}
 pub struct ArpParser {}
 
 impl LayerParser for EthernetParser {
-    fn parse(
-        data: &Vec<u8>,
-        packet_context: &mut PacketContext,
-        _: Option<&mut FragmentedPackets>,
-    ) -> Option<Vec<Layer>> {
+    fn parse(input: &[u8], _: Option<&mut FragmentedPackets>) -> Option<ParseResult> {
         // Data link
-        let Some(ethernet_packet) = EthernetPacket::new(data) else {
-            return None;
-        };
+        let ethernet_packet = EthernetPacket::new(&input)?;
 
-        packet_context.ethertype = Some(ethernet_packet.get_ethertype());
-        packet_context.datalink_payload = ethernet_packet.payload().to_vec();
-        packet_context.network_payload = vec![];
-        packet_context.next_protocol = ethernet_packet.get_ethertype().to_string();
-        if ethernet_packet.get_ethertype() == EtherTypes::Arp {
-            println!("{}", packet_context.next_protocol);
-        }
-        packet_context.src = ethernet_packet.get_source().to_string();
-        packet_context.dst = ethernet_packet.get_destination().to_string();
-
-        Some(vec![Layer {
-            protocol: "Ethernet".to_string(),
-            name: "Ethernet Frame".to_string(),
-            osi_layer: OsiLayer::DataLink,
-            fields: vec![
-                Field::new(
-                    "Source".to_string(),
-                    format!("{:02x?}", ethernet_packet.get_source()),
-                ),
-                Field::new(
-                    "Destination".to_string(),
-                    format!("{:02x?}", ethernet_packet.get_destination()),
-                ),
-                Field::new(
-                    "EtherType".to_string(),
-                    format!("{}", ethernet_packet.get_ethertype().to_string()),
-                ),
-            ],
-        }])
+        Some(ParseResult {
+            layer: Layer {
+                protocol: "Ethernet".to_string(),
+                name: "Ethernet Frame".to_string(),
+                osi_layer: OsiLayer::DataLink,
+                fields: vec![
+                    Field::new(
+                        "Source".to_string(),
+                        format!("{:02x?}", ethernet_packet.get_source()),
+                    ),
+                    Field::new(
+                        "Destination".to_string(),
+                        format!("{:02x?}", ethernet_packet.get_destination()),
+                    ),
+                    Field::new(
+                        "EtherType".to_string(),
+                        format!("{}", ethernet_packet.get_ethertype().to_string()),
+                    ),
+                ],
+            },
+            next: ProtocolId::from_ethertype(ethernet_packet.get_ethertype()),
+            remaining: ethernet_packet.payload().to_vec(),
+        })
     }
 }
 
@@ -66,23 +50,16 @@ pub enum ArpOperation {
 impl ToString for ArpOperation {
     fn to_string(&self) -> String {
         match *self {
+            Self::Request => "Request".to_string(),
             Self::Reply => "Reply".to_string(),
-            Self::Request => "Reply".to_string(),
             Self::Unknown => "Unknow".to_string(),
         }
     }
 }
 
 impl LayerParser for ArpParser {
-    fn parse(
-        _: &Vec<u8>,
-        packet_context: &mut PacketContext,
-        _: Option<&mut FragmentedPackets>,
-    ) -> Option<Vec<Layer>> {
-        let payload = packet_context.datalink_payload.clone();
-        let Some(arp_packet) = ArpPacket::new(&payload) else {
-            return None;
-        };
+    fn parse(input: &[u8], _: Option<&mut FragmentedPackets>) -> Option<ParseResult> {
+        let arp_packet = ArpPacket::new(&input)?;
 
         let mut fields = vec![];
 
@@ -134,16 +111,15 @@ impl LayerParser for ArpParser {
             arp_packet.get_protocol_type().to_string(),
         ));
 
-        packet_context.network_payload = vec![];
-        packet_context.next_protocol = "".to_string();
-        packet_context.src = arp_packet.get_sender_proto_addr().to_string();
-        packet_context.dst = arp_packet.get_target_hw_addr().to_string();
-
-        Some(vec![Layer {
-            protocol: "Arp".to_string(),
-            name: "Arp Packet".to_string(),
-            fields,
-            osi_layer: OsiLayer::DataLink,
-        }])
+        Some(ParseResult {
+            layer: Layer {
+                protocol: "Arp".to_string(),
+                name: "Arp Packet".to_string(),
+                fields,
+                osi_layer: OsiLayer::DataLink,
+            },
+            next: ProtocolId::None,
+            remaining: arp_packet.payload().to_vec(),
+        })
     }
 }

@@ -13,6 +13,19 @@ A packet is the following:
     [Field]
     A field with name and value
 
+Architecture:
+    Packet capture
+        Channel
+    Pipeline
+        Layer 2-4 Protocol
+        Application Layer
+    UI
+
+    Packet registry
+    Reassembly registry
+    Packet Context
+    ParseOutcome
+
 [TcpStream]
 src: (IpAddr, u16),
 dst: (IpAddr, u16),
