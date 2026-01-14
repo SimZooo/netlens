@@ -1,26 +1,22 @@
-use std::collections::BTreeMap;
-use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use pnet::datalink::{self, Channel::Ethernet};
-use pnet::packet::ethernet::EtherType;
 
-use pnet::packet::ip::IpNextHeaderProtocol;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tauri::{Manager, State};
 
-use crate::protocols::{ProtocolId, PROTOCOLS};
-use crate::reassembler::{FragmentedKey, FragmentedPackets, Reassembler};
+use crate::packet_handler::PacketHandler;
 
 pub struct AppState {
     interface: Option<String>,
     listen: bool,
 }
 
+mod packet_handler;
 mod parsers;
 mod protocols;
 mod reassembler;
@@ -107,7 +103,7 @@ fn set_listen(val: bool, state: State<'_, Arc<Mutex<AppState>>>) {
 fn start_listening(state: State<'_, Arc<Mutex<AppState>>>, app: AppHandle) {
     let state_clone = state.inner().clone();
     thread::spawn(move || {
-        let mut fragmented_packets: FragmentedPackets = BTreeMap::new();
+        let mut packet_handler = PacketHandler::new();
 
         let interface_name = {
             let state = state_clone.lock().unwrap();
@@ -124,6 +120,7 @@ fn start_listening(state: State<'_, Arc<Mutex<AppState>>>, app: AppHandle) {
             Ok(_) => panic!("Unhandled physical layer type"),
             Err(e) => panic!("Error creating interface channel: {e}"),
         };
+
         loop {
             let listen = {
                 let Ok(state) = state_clone.lock() else {
@@ -137,88 +134,9 @@ fn start_listening(state: State<'_, Arc<Mutex<AppState>>>, app: AppHandle) {
                 continue;
             }
             match rx.next() {
-                Ok(packet) => {
-                    let network_packet = handle_packet(packet, &mut fragmented_packets);
-                    if let Some(p) = network_packet {
-                        let _ = app.emit("packet_received", p);
-                    }
-                }
+                Ok(packet) => packet_handler.handle_packet(packet, app.clone()),
                 Err(e) => eprintln!("{e}"),
-            }
-
-            let reassembled_packets = Reassembler::update(&mut fragmented_packets);
-            for packet in reassembled_packets {
-                let p = handle_packet(&packet.remaining, &mut fragmented_packets);
-                if let Some(p) = p {
-                    let _ = app.emit("packet_received", p);
-                }
             }
         }
     });
-}
-
-pub fn handle_packet(
-    packet: &[u8],
-    fragmented_packets: &mut FragmentedPackets,
-) -> Option<NetworkPacket> {
-    let mut layers = vec![];
-    let mut next = ProtocolId::Ethernet;
-    let mut bytes = packet.to_vec();
-
-    while next != ProtocolId::None {
-        for protocol in PROTOCOLS {
-            if protocol.name != next {
-                continue;
-            }
-
-            let parser = protocol.parser?;
-
-            let prot_res = (parser)(&bytes, Some(fragmented_packets));
-            if let Some(parse_res) = prot_res {
-                layers.push(parse_res.layer);
-                bytes = parse_res.remaining.to_vec();
-                next = parse_res.next;
-            } else {
-                next = ProtocolId::None;
-            }
-        }
-    }
-
-    // Prefer Network layer, fallback to DataLink
-    let mut src = "".to_string();
-    let mut dst = "".to_string();
-    for layer in layers.iter().filter(|l| l.osi_layer == OsiLayer::Network) {
-        for field in &layer.fields {
-            match field.name.as_str() {
-                "Source" | "src" => src = field.value.clone(),
-                "Destination" | "dst" => dst = field.value.clone(),
-                _ => {}
-            }
-        }
-    }
-
-    if src.is_empty() || dst.is_empty() {
-        for layer in layers.iter().filter(|l| l.osi_layer == OsiLayer::DataLink) {
-            for field in &layer.fields {
-                match field.name.as_str() {
-                    "Source" | "src" => src = field.value.clone(),
-                    "Destination" | "dst" => dst = field.value.clone(),
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    Some(NetworkPacket {
-        src,
-        dst,
-        id: uuid::Uuid::new_v4().to_string(),
-        layers,
-        raw: packet.to_vec(),
-        timestamp: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .and_then(|t| Ok(t.as_secs_f64()))
-            .unwrap_or(0.),
-        length: packet.len(),
-    })
 }

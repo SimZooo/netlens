@@ -2,7 +2,11 @@ use std::{collections::BTreeMap, net::IpAddr};
 
 use pnet::packet::{ethernet::EtherType, ip::IpNextHeaderProtocol};
 
-use crate::{parsers::parser::ParseResult, protocols::ProtocolId, Field, Layer, OsiLayer};
+use crate::{
+    parsers::parser::{ParseResult, ParseResultType},
+    protocols::ProtocolId,
+    Field, Layer, OsiLayer,
+};
 
 pub type FragmentedPackets = BTreeMap<FragmentedKey, IpFragmentedPacket>;
 
@@ -13,6 +17,7 @@ pub struct IpFragmentedPacket {
     pub next_protocol: Option<IpNextHeaderProtocol>,
     pub fragments: BTreeMap<usize, Vec<u8>>,
     pub fields: Vec<Field>,
+    pub ids: Vec<String>,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
@@ -32,6 +37,7 @@ impl IpFragmentedPacket {
         fragment: Vec<u8>,
         byte_offset: usize,
         fields: Vec<Field>,
+        id: String,
     ) -> Self {
         let mut fragments = BTreeMap::new();
         fragments.insert(byte_offset, fragment);
@@ -42,14 +48,21 @@ impl IpFragmentedPacket {
             next_protocol: Some(next_protocol),
             fragments,
             fields,
+            ids: vec![id],
         }
     }
+}
+
+pub struct ReassembleResult {
+    pub parse_result: ParseResult,
+    pub fragment_ids: Vec<String>,
+    pub defragmented_id: String,
 }
 
 pub struct Reassembler {}
 
 impl Reassembler {
-    pub fn update(fragmented_packets: &mut FragmentedPackets) -> Vec<ParseResult> {
+    pub fn update(fragmented_packets: &mut FragmentedPackets) -> Vec<ReassembleResult> {
         let mut results = vec![];
         let done_ids: Vec<FragmentedKey> = fragmented_packets
             .iter()
@@ -83,15 +96,20 @@ impl Reassembler {
                 "Defragmented".to_string(),
                 format!("{} Fragments", n),
             ));
-            results.push(ParseResult {
-                layer: Layer {
-                    name: "Internet Protocol Version 4".to_string(),
-                    protocol: next.to_string(),
-                    osi_layer: OsiLayer::Network,
-                    fields,
+            results.push(ReassembleResult {
+                parse_result: ParseResult {
+                    layer: Layer {
+                        name: "Internet Protocol Version 4".to_string(),
+                        protocol: next.to_string(),
+                        osi_layer: OsiLayer::Network,
+                        fields,
+                    },
+                    next,
+                    remaining: buffer,
+                    result_type: ParseResultType::Normal,
                 },
-                next,
-                remaining: buffer,
+                fragment_ids: frag.ids,
+                defragmented_id: uuid::Uuid::new_v4().to_string(),
             });
         }
 

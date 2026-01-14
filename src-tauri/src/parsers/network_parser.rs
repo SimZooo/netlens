@@ -11,7 +11,7 @@ use pnet::packet::{
 };
 
 use crate::{
-    parsers::parser::{LayerParser, ParseInput, ParseResult},
+    parsers::parser::{LayerParser, ParseInput, ParseResult, ParseResultType},
     protocols::ProtocolId,
     reassembler::{FragmentedKey, FragmentedPackets, IpFragmentedPacket},
     Field, Layer, OsiLayer,
@@ -31,6 +31,7 @@ impl LayerParser for Ipv4Parser {
         let fragmented =
             (ip_packet.get_flags() & 0b001) != 0 || ip_packet.get_fragment_offset() != 0;
         let mut next = ProtocolId::from_ip(ip_packet.get_next_level_protocol());
+        let mut result_type = ParseResultType::Normal;
 
         let mut fields = vec![
             Field::new("Source".to_string(), ip_packet.get_source().to_string()),
@@ -55,6 +56,8 @@ impl LayerParser for Ipv4Parser {
         };
 
         if fragmented {
+            let id = uuid::Uuid::new_v4().to_string();
+            result_type = ParseResultType::Fragmented(id.clone());
             next = ProtocolId::None;
             let Some(fragmented_packets) = fragmented_packets else {
                 println!("Fragmented Packets is None in NetworkParser, must be Some");
@@ -62,7 +65,6 @@ impl LayerParser for Ipv4Parser {
             };
 
             if let Some(frag) = fragmented_packets.get_mut(&key) {
-                println!("Existing fragmented packet");
                 frag.fragments.insert(
                     ip_packet.get_fragment_offset() as usize,
                     ip_packet.payload().to_vec(),
@@ -72,7 +74,6 @@ impl LayerParser for Ipv4Parser {
                     let mut expected = 0;
                     let mut done = true;
                     for f in frag.fragments.iter() {
-                        println!("{} {}", f.0, expected);
                         if *f.0 != expected {
                             done = false;
                             break;
@@ -91,15 +92,15 @@ impl LayerParser for Ipv4Parser {
                         ip_packet.payload().to_vec(),
                         ip_packet.get_fragment_offset() as usize,
                         fields.clone(),
+                        id,
                     ),
                 );
             }
-
             fields.insert(
                 0,
                 Field::new(
-                    "Fragmented".to_string(),
-                    format!("Offset: {}", ip_packet.get_fragment_offset().to_string()),
+                    "Fragment offset".to_string(),
+                    ip_packet.get_fragment_offset().to_string(),
                 ),
             );
         }
@@ -113,6 +114,7 @@ impl LayerParser for Ipv4Parser {
             },
             next,
             remaining: ip_packet.payload().to_vec(),
+            result_type: result_type,
         })
     }
 }
@@ -169,6 +171,7 @@ impl LayerParser for Ipv6Parser {
             },
             next: ProtocolId::from_ip(top_level_protocol.unwrap_or(ip_packet.get_next_header())),
             remaining: ip_packet.payload().to_vec(),
+            result_type: ParseResultType::Normal,
         })
     }
 }
@@ -176,7 +179,6 @@ impl LayerParser for Ipv6Parser {
 impl LayerParser for IcmpParser {
     fn parse(input: &[u8], _: Option<&mut FragmentedPackets>) -> Option<ParseResult> {
         let icmp_packet = IcmpPacket::new(&input)?;
-        println!("heyo");
         Some(ParseResult {
             layer: Layer {
                 name: "Icmp Packet".to_string(),
@@ -199,6 +201,7 @@ impl LayerParser for IcmpParser {
             },
             next: ProtocolId::None,
             remaining: icmp_packet.payload().to_vec(),
+            result_type: ParseResultType::Normal,
         })
     }
 }
@@ -228,6 +231,7 @@ impl LayerParser for Icmpv6Parser {
             },
             next: ProtocolId::None,
             remaining: icmp_packet.payload().to_vec(),
+            result_type: ParseResultType::Normal,
         })
     }
 }

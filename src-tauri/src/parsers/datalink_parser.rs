@@ -1,7 +1,7 @@
 use pnet::packet::{arp::ArpPacket, ethernet::EthernetPacket, Packet};
 
 use crate::{
-    parsers::parser::{LayerParser, ParseInput, ParseResult},
+    parsers::parser::{LayerParser, ParseInput, ParseResult, ParseResultType},
     protocols::ProtocolId,
     reassembler::FragmentedPackets,
     Field, Layer, OsiLayer,
@@ -37,6 +37,7 @@ impl LayerParser for EthernetParser {
             },
             next: ProtocolId::from_ethertype(ethernet_packet.get_ethertype()),
             remaining: ethernet_packet.payload().to_vec(),
+            result_type: ParseResultType::Normal,
         })
     }
 }
@@ -120,6 +121,7 @@ impl LayerParser for ArpParser {
             },
             next: ProtocolId::None,
             remaining: arp_packet.payload().to_vec(),
+            result_type: ParseResultType::Normal,
         })
     }
 }

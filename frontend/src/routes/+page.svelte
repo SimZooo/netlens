@@ -3,15 +3,18 @@
     import { invoke } from "@tauri-apps/api/core";
     import { listen } from "@tauri-apps/api/event";
     import * as Infinitable from "svelte-infinitable";
-    import type { NetworkPacket } from "$lib";
+    import { table_headers, type NetworkPacket } from "$lib";
     import { onMount } from "svelte";
     import PacketInspector from "../components/PacketInspector.svelte";
     import { writable, type Writable } from "svelte/store";
+    import type { RefreshDetail } from "svelte-infinitable/types";
+    import Hexview from "../components/hexview.svelte";
 
     let listening = $state(false);
     let packets: Writable<NetworkPacket[]> = writable([]);
-    let selected_packet = $state();
+    let selected_packet: string | undefined = $state();
     let packets_buffer: NetworkPacket[] = [];
+    let filtered_packets: NetworkPacket[] = $state([]);
     let flush_scheduled = false;
 
     listen<NetworkPacket>("packet_received", (e) => {
@@ -31,6 +34,8 @@
         }
     });
 
+    listen<string[]>("fragments_update", (e) => {});
+
     function flush_packets() {
         packets.update((pkts) => {
             pkts.push(...packets_buffer);
@@ -40,6 +45,8 @@
 
         flush_scheduled = false;
     }
+
+    async function filter_packets(refresh_detail: RefreshDetail) {}
 
     onMount(() => {});
 </script>
@@ -74,39 +81,21 @@
                 <div class="h-full min-h-0 overflow-auto">
                     <Infinitable.Root
                         bind:items={$packets}
-                        rowHeight={28}
+                        rowHeight={30}
                         class="min-h-0 border-0"
                         ignoreInfinite={true}
+                        onFilter={filter_packets}
                     >
+                        {#snippet actions()}
+                            <Infinitable.ActionRow></Infinitable.ActionRow>
+                        {/snippet}
                         {#snippet headers()}
-                            <Infinitable.Header
-                                header={{ label: "No." }}
-                                class="text-left bg-background"
-                            />
-                            <Infinitable.Header
-                                header={{ label: "Time" }}
-                                class="text-left bg-background"
-                            />
-                            <Infinitable.Header
-                                header={{ label: "Source" }}
-                                class="text-left bg-background"
-                            />
-                            <Infinitable.Header
-                                header={{ label: "Destination" }}
-                                class="text-left bg-background"
-                            />
-                            <Infinitable.Header
-                                header={{ label: "Protocol" }}
-                                class="text-left bg-background"
-                            />
-                            <Infinitable.Header
-                                header={{ label: "Length" }}
-                                class="text-left bg-background"
-                            />
-                            <Infinitable.Header
-                                header={{ label: "Info" }}
-                                class="text-left bg-background"
-                            />
+                            {#each table_headers as header}
+                                <Infinitable.Header
+                                    {header}
+                                    class="text-left bg-background px-2"
+                                />
+                            {/each}
                         {/snippet}
 
                         {#snippet children({ index, selectedCount })}
@@ -163,10 +152,15 @@
 
             {#if selected_packet}
                 <PaneResizer class="w-full h-1 border-t-textd border-t" />
-                <Pane defaultSize={35} class="grid grid-rows-2">
+                <Pane defaultSize={35} class="grid grid-cols-2">
                     <PacketInspector
                         packet={$packets.find((p) => p.id === selected_packet)!}
                     ></PacketInspector>
+                    <Hexview
+                        data={$packets.find(
+                            (packet) => packet.id === selected_packet,
+                        )?.raw!}
+                    ></Hexview>
                 </Pane>
             {/if}
         </PaneGroup>

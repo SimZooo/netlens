@@ -56,16 +56,16 @@ Reassemble packet fragments
 Make UI look better
 Handle IPv6
     For extensions, parse each extension in order
+Parse Tcp Flags
+Make a custom parsing library for layer 5-7(wip)
 
 [Todo next]
-FOCUS ON BACKEND
+    Replace UUID with pure integer ID
     Find some way to decide what the info field should show. It can be information about the top level packet, or if its an IP fragment, the link to the defragmented frame
-    Parse Tcp Flags
-    Parse non-transport protocols (e.g. using serde and have a map of wanted fields for each protocol. probably slow)
     ** Handle TCP segments **
-    Filtering logic, like what to ignore (Icmp tf)
-
-    ** Either make a custom parsing library for layer 5-7 or use something like etherparse **
+    Filtering logic, like what to ignore (Icmp)
+    Fix defragmented packet
+        Fragment ID
 
     Give ability to follow a TCP Stream (stream ID)
         Use both IP-address as well as TCP Port

@@ -18,7 +18,7 @@
     });
 </script>
 
-<div class="size-full p-2">
+<div class="size-full p-2 overflow-y-auto">
     <p>Packet: {packet.id}</p>
     {#each packet.layers as layer, i}
         <div class="w-full h-fit flex flex-col">

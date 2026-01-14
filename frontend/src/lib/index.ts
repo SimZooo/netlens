@@ -1,3 +1,5 @@
+import type { TableHeader } from "svelte-infinitable/types";
+
 export enum OsiLayer {
   Physical,
   DataLink,
@@ -41,3 +43,36 @@ export function get_top_layer(packet: NetworkPacket): Layer {
 
   return packet.layers[packet.layers.length - 1];
 }
+
+export let table_headers: TableHeader[] = [
+  {
+    label: "No.",
+  },
+  { label: "Time" },
+  {
+    label: "Source",
+    filter: {
+      type: "text",
+      mode: "server",
+      placeholder: "Filter by Source",
+    },
+  },
+  {
+    label: "Destination",
+    filter: {
+      type: "text",
+      mode: "server",
+      placeholder: "Filter by Destination",
+    },
+  },
+  {
+    label: "Protocol",
+    filter: {
+      type: "text",
+      mode: "server",
+      placeholder: "Filter by Protocol",
+    },
+  },
+  { label: "Length" },
+  { label: "Info" },
+];
